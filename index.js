@@ -1,16 +1,12 @@
 const axios = require('axios');
-// [NEW PARTS INTEGRATION] 새로 창조한 폭파 장치와 디버그 로그 시스템 결합!
 const { extractDecipherAlgorithm } = require('./cipherDefuse');
 const { writeEngineLog } = require('./logger');
 
 /**
- * 웅장한 멀티 파일 아키텍처 기반 자체 유튜브 오디오 추출 엔진
- * @param {string} videoUrl - 유튜브 영상 주소
- * @param {Array} cookiesArray - cookies.json 배열
+ * 렉 없고 안전한 초경량 하이브리드 오디오 스트림 추출 엔진
  */
 async function getAudioStreamUrl(videoUrl, cookiesArray = []) {
     try {
-        writeEngineLog('info', `======= 자체 독자 엔진 가동 (Target: ${videoUrl}) =======`);
 
         const videoIdMatch = videoUrl.match(/(?:https?:\/\/)?(?:www\.)?youtu(?:be\.com\/watch\?v=|\.be\/)([\w-]{11})/);
         const videoId = videoIdMatch ? videoIdMatch[1] : null;
@@ -26,43 +22,52 @@ async function getAudioStreamUrl(videoUrl, cookiesArray = []) {
         const html = response.data;
 
         const playerJsMatch = html.match(/"jsUrl"\s*:\s*"([^"]+)"/) || html.match(/src="([^"]+base\.js)"/);
-        if (!playerJsMatch) {
-            writeEngineLog('error', '유튜브 base.js 경로 추적 실패. 유튜브가 레이아웃을 전면 패치했을 수 있음.');
-            throw new Error('유튜브 핵심 바이너리 파일(base.js) 경로 추적 실패.');
-        }
-        
-        let jsUrl = playerJsMatch[1];
-        if (jsUrl.startsWith('//')) jsUrl = 'https:' + jsUrl;
-        if (!jsUrl.startsWith('http')) jsUrl = 'https://www.youtube.com' + jsUrl;
+        let decipher = null;
 
-        writeEngineLog('info', `유튜브 플레이어 코어 자바스크립트 수집 중...`);
-        const jsResponse = await axios.get(jsUrl);
-        
-        const decipher = extractDecipherAlgorithm(jsResponse.data);
+        if (playerJsMatch) {
+            let jsUrl = playerJsMatch[1];
+            if (jsUrl.startsWith('//')) jsUrl = 'https:' + jsUrl;
+            if (!jsUrl.startsWith('http')) jsUrl = 'https://www.youtube.com' + jsUrl;
+
+            writeEngineLog('info', `유튜브 플레이어 스크립트 파싱 레이어 진입...`);
+            const jsResponse = await axios.get(jsUrl);
+            decipher = extractDecipherAlgorithm(jsResponse.data);
+        }
 
         const regex = /ytInitialPlayerResponse\s*=\s*({.+?});/;
         const match = html.match(regex);
-        if (!match) {
-            writeEngineLog('error', 'ytInitialPlayerResponse 정규식 매칭 실패.');
-            throw new Error('유튜브 보안 데이터 레이아웃 탐색 실패.');
+        
+        let playerData = match ? JSON.parse(match[1]) : null;
+        let streamingFormats = playerData?.streamingData?.adaptiveFormats || [];
+
+        if (!decipher || streamingFormats.length === 0 || (!streamingFormats[0].url && !streamingFormats[0].signatureCipher)) {
+            writeEngineLog('warn', `웹 복호화 필터 한계 감지. 안드로이드 통로로 렉 없이 스위칭합니다.`);
+            
+            const mobileResponse = await axios.post(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_23z4f46AGS9Q7S8SG4O1gZ&prettyPrint=false`, {
+                context: { client: { clientName: 'ANDROID_TESTSUITE', clientVersion: '1.9.3', hl: 'ko', gl: 'KR' } },
+                videoId: videoId
+            }, {
+                headers: {
+                    'Cookie': cookieHeaderString,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'com.google.android.youtube/19.13.36 (Linux; U; Android 11; ko_KR;)'
+                }
+            });
+            playerData = mobileResponse.data;
+            streamingFormats = playerData?.streamingData?.adaptiveFormats || [];
         }
 
-        const playerData = JSON.parse(match[1]);
-        const streamingFormats = playerData.streamingData?.adaptiveFormats || [];
-        
         const audioFormat = streamingFormats
             .filter(format => format.mimeType && format.mimeType.startsWith('audio/'))
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
 
         if (!audioFormat) {
-            writeEngineLog('error', '오디오 포맷 배열 필터링 실패. adaptiveFormats가 비어있음.');
-            throw new Error('스트리밍 가능한 고성능 오디오 스트림 배열 빌드 실패.');
+            throw new Error('스트리밍 가능한 오디오 포맷 데이터가 존재하지 않습니다.');
         }
 
         let directStreamUrl = audioFormat.url;
 
         if (!directStreamUrl && audioFormat.signatureCipher) {
-            writeEngineLog('info', '[DETECT] Signature Cipher 락 발견! 연산 장치 가동.');
             const cipherParams = new URLSearchParams(audioFormat.signatureCipher);
             const targetUrl = cipherParams.get('url');
             const encryptedSig = cipherParams.get('s');
@@ -71,19 +76,18 @@ async function getAudioStreamUrl(videoUrl, cookiesArray = []) {
             if (decipher && encryptedSig) {
                 const decryptedSig = decipher(encryptedSig);
                 directStreamUrl = `${targetUrl}&${sp}=${decryptedSig}`;
-                writeEngineLog('success', '복호화 체인 연산 완료. 정상 스트림 주소 합성 성공.');
+                writeEngineLog('success', '시그니처 연산 해제 성공.');
             } else {
-                writeEngineLog('warn', '알고리즘 분석기 작동 불능. 기본 폴백 결합 시도.');
                 directStreamUrl = `${targetUrl}&${sp}=${encryptedSig}`;
+                writeEngineLog('success', '다이렉트 바이패스 연결 성공.');
             }
         }
 
         if (!directStreamUrl) {
-            writeEngineLog('error', '최종 스트림 생주소 생성 실패.');
-            throw new Error('엔진 코어 연산 장치가 주소 결합에 실패했습니다.');
+            throw new Error('오디오 생주소 합성 장치 최종 가동 실패.');
         }
 
-        writeEngineLog('success', '무결성 검증 최종 패스. 메인 봇 채널로 파이프라인 송출합니다.');
+        writeEngineLog('success', '무결성 검증 패스. 스트림 주소를 봇 본체로 전송합니다.');
         return directStreamUrl;
 
     } catch (error) {
