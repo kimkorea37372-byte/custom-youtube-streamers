@@ -1,0 +1,9 @@
+{
+  "name": "custom-youtube-streamer",
+  "version": "1.0.0",
+  "description": "Pure Axios Youtube Audio Stream Extractor",
+  "main": "index.js",
+  "dependencies": {
+    "axios": "^1.7.9"
+  }
+}
