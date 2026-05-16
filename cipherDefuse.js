@@ -1,15 +1,30 @@
 /**
- * YouTube JavaScript 플레이어 바이너리 파싱 및 역연산 가동기
+ * 최신 유튜브 base.js 가변 난독화 알고리즘 역추적 및 초고속 해독기
  */
 function extractDecipherAlgorithm(baseJsContent) {
     try {
-        const actionsObjMatch = baseJsContent.match(/([a-zA-Z0-9$_]+)\s*=\s*\{\s*([a-zA-Z0-9$_]+)\s*:\s*function\s*\(\s*a\s*,\s*b\s*\)/);
-        const mainFuncNameMatch = baseJsContent.match(/split\(\s*""\s*\)\s*;\s*([a-zA-Z0-9$_]+)\./);
+        const mainFuncMatch = baseJsContent.match(/([a-zA-Z0-9$_]+)\s*=\s*function\s*\(\s*a\s*\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)/) 
+                             || baseJsContent.match(/function\s+([a-zA-Z0-9$_]+)\s*\(a\)\s*\{\s*a\s*=\s*a\.split\(\s*""\s*\)/)
+                             || baseJsContent.match(/([a-zA-Z0-9$_]+)\s*=\s*function\s*\(\s*([a-zA-Z0-9$_]+)\s*\)\s*\{\s*\2\s*=\s*\2\.split\(\s*""\s*\)/);
         
-        if (!actionsObjMatch || !mainFuncNameMatch) return null;
-        
-        const objName = actionsObjMatch[1];
-        const mainFuncName = mainFuncNameMatch[1];
+        if (!mainFuncMatch) return null;
+        const mainFuncName = mainFuncMatch[1];
+
+        const funcRegex = new RegExp(`(?:function\\s+${mainFuncName.replace('$', '\\$')}\\s*\\(a\\)|${mainFuncName.replace('$', '\\$')}\\s*=\\s*function\\s*\\(a\\)|${mainFuncName.replace('$', '\\$')}\\s*=\\s*function\\s*\\([a-zA-Z0-9$_]+\\))\\s*\\{([\\s\\S]+?)\\}`);
+        const funcMatch = baseJsContent.match(funcRegex);
+        if (!funcMatch) return null;
+
+        const statements = funcMatch[1].split(';');
+
+        let objName = null;
+        for (const stmt of statements) {
+            const objMatch = stmt.match(/([a-zA-Z0-9$_]+)\.([a-zA-Z0-9$_]+)\s*\(\s*[a-zA-Z0-9$_]+\s*,/);
+            if (objMatch) {
+                objName = objMatch[1];
+                break;
+            }
+        }
+        if (!objName) return null;
 
         const objRegex = new RegExp(`var\\s+${objName.replace('$', '\\$')}\\s*=\\s*\\{([\\s\\S]+?)\\};`);
         const objMatch = baseJsContent.match(objRegex);
@@ -25,22 +40,15 @@ function extractDecipherAlgorithm(baseJsContent) {
             const body = parts[1];
 
             if (body.includes('reverse')) functions[key] = 'reverse';
-            else if (body.includes('slice')) functions[key] = 'slice';
-            else if (body.includes('splice')) functions[key] = 'slice';
+            else if (body.includes('slice') || body.includes('splice')) functions[key] = 'slice';
             else functions[key] = 'swap';
         });
-
-        const funcRegex = new RegExp(`function\\s+${mainFuncName.replace('$', '\\$')}\\s*\\(a\\)\\s*\\{([\\s\\S]+?)\\}`);
-        const funcMatch = baseJsContent.match(funcRegex);
-        if (!funcMatch) return null;
-
-        const statements = funcMatch[1].split(';');
 
         return function(sig) {
             let arr = sig.split('');
             for (const stmt of statements) {
                 if (!stmt.includes(`${objName}.`)) continue;
-                const cmdMatch = stmt.match(new RegExp(`${objName\\.replace('$', '\\$')}\\.([a-zA-Z0-9$_]+)\\s*\\(\\s*a\\s*,?\\s*([0-9]*)\\s*\\)`));
+                const cmdMatch = stmt.match(new RegExp(`${objName.replace('$', '\\$')}\\.([a-zA-Z0-9$_]+)\\s*\\(\\s*[a-zA-Z0-9$_]+\\s*,?\\s*([0-9]*)\\s*\\)`));
                 if (!cmdMatch) continue;
 
                 const action = functions[cmdMatch[1]];
@@ -57,7 +65,7 @@ function extractDecipherAlgorithm(baseJsContent) {
             return arr.join('');
         };
     } catch (e) {
-        console.error('[CIPHER CORE EXCEPTION]', e);
+        console.error('[CIPHER ANALYSIS CRITICAL ERROR]', e);
         return null;
     }
 }
